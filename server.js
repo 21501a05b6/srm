@@ -6,7 +6,7 @@ const PORT = 3000;
 
 // MySQL Configuration
 const dbConfig = {
-  host: 'localhost',
+  host: process.env.DB_HOST,
   user: 'root',
   password: 'root',
   database: 'srm_db',
