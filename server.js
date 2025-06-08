@@ -1,23 +1,22 @@
 const express = require('express');
-const mysql = require('mysql2/promise');
+const { Pool } = require('pg');
 const path = require('path');
 const app = express();
 const PORT = 3000;
 
-// MySQL Configuration
+// PostgreSQL Configuration
 const dbConfig = {
-  host: process.env.DB_HOST,
-  user: 'root',
-  password: 'root',
+  host: 'localhost',
+  user: 'postgres',
+  password: 'postgres', // change to your PostgreSQL password
   database: 'srm_db',
-  port: 3306,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
+  port: 5432,
+  max: 10, // maximum number of clients in the pool
+  idleTimeoutMillis: 30000
 };
 
-// Create MySQL pool
-const pool = mysql.createPool(dbConfig);
+// Create PostgreSQL pool
+const pool = new Pool(dbConfig);
 
 // Middleware
 app.use(express.json());
@@ -27,12 +26,12 @@ app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 // Test database connection
 async function testConnection() {
   try {
-    const conn = await pool.getConnection();
-    console.log('✅ MySQL connected successfully');
-    conn.release();
+    const client = await pool.connect();
+    console.log('✅ PostgreSQL connected successfully');
+    client.release();
     return true;
   } catch (err) {
-    console.error('❌ MySQL connection failed:', err);
+    console.error('❌ PostgreSQL connection failed:', err);
     return false;
   }
 }
@@ -50,7 +49,6 @@ app.post('/api/evaluations', async (req, res) => {
   try {
     const formData = req.body.data;
     
-    // Map form fields to database columns
     const evaluationData = {
       category: formData.category,
       sub_category: formData.subCategory,
@@ -74,15 +72,28 @@ app.post('/api/evaluations', async (req, res) => {
       supplier_audit: parseInt(formData.supplier_audit) || 0
     };
 
-    const [result] = await pool.query(
-      `INSERT INTO supplier_evaluations SET ?`,
-      evaluationData
-    );
-    
+    const query = `
+      INSERT INTO supplier_evaluations (
+        category, sub_category, supplier_name, evaluation_month,
+        portfolio_diversity, credit_term, capacity_utilisation,
+        strategic_partnership, business_etiquette, inventory_carrying,
+        advance_notice, knowledge_sharing, legal_contracts,
+        cost_competitiveness, cost_model, sdp_rating,
+        quality_glo, quality_gsqa_ing, sc_notification, supplier_audit
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
+      ) RETURNING id
+    `;
+
+    const values = Object.values(evaluationData);
+
+    const result = await pool.query(query, values);
+
     res.json({ 
       success: true, 
       message: 'Evaluation submitted successfully',
-      evaluationId: result.insertId
+      evaluationId: result.rows[0].id
     });
   } catch (err) {
     console.error('Database Error:', err);
@@ -96,13 +107,14 @@ app.post('/api/evaluations', async (req, res) => {
 
 app.get('/api/evaluations', async (req, res) => {
   try {
-    const [rows] = await pool.query(`
+    const query = `
       SELECT id, supplier_name, evaluation_month, total_score, created_at
       FROM supplier_evaluations
       ORDER BY created_at DESC
       LIMIT 100
-    `);
-    res.json({ success: true, data: rows });
+    `;
+    const result = await pool.query(query);
+    res.json({ success: true, data: result.rows });
   } catch (err) {
     console.error('Database Error:', err);
     res.status(500).json({ success: false, message: 'Failed to load evaluations' });
@@ -114,7 +126,7 @@ async function startServer() {
   if (await testConnection()) {
     app.listen(PORT, () => {
       console.log(`Server running on http://localhost:${PORT}`);
-      console.log(`MySQL database: ${dbConfig.database} on port ${dbConfig.port}`);
+      console.log(`PostgreSQL database: ${dbConfig.database} on port ${dbConfig.port}`);
     });
   } else {
     console.error('Failed to start server due to database connection issues');
